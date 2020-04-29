@@ -11,7 +11,7 @@ from scipy.signal import butter,filtfilt, kaiserord, lfilter, firwin, freqz
 
 HEIGHT_THRESHOLD = 0.0  # meters
 GROUND_HEIGHT_THRESHOLD = -.4  # meters
-DT = 0.1
+DT = 0.01
 X_LANDMARK = 5.  # meters
 Y_LANDMARK = -5.  # meters
 EARTH_RADIUS = 6.3781E6  # meters
@@ -91,10 +91,10 @@ def convert_gps_to_xy(lat_gps, lon_gps, lat_origin, lon_origin):
     x_gps (float)          -- the converted x coordinate
     y_gps (float)          -- the converted y coordinate
     """
-    # x_gps = EARTH_RADIUS*(math.pi/180.)*(lon_gps - lon_origin)*math.cos((math.pi/180.)*lat_origin)
-    # y_gps = EARTH_RADIUS*(math.pi/180.)*(lat_gps - lat_origin)
-    x_gps = np.abs(EARTH_RADIUS*(math.pi/180.)*(lon_gps - lon_origin)*math.cos((math.pi/180.)*lat_origin))
-    y_gps = np.abs(EARTH_RADIUS*(math.pi/180.)*(lat_gps - lat_origin))
+    x_gps = EARTH_RADIUS*(math.pi/180.)*(lon_gps - lon_origin)*math.cos((math.pi/180.)*lat_origin)
+    y_gps = EARTH_RADIUS*(math.pi/180.)*(lat_gps - lat_origin)
+    # x_gps = np.abs(EARTH_RADIUS*(math.pi/180.)*(lon_gps - lon_origin)*math.cos((math.pi/180.)*lat_origin))
+    # y_gps = np.abs(EARTH_RADIUS*(math.pi/180.)*(lat_gps - lat_origin))
     return x_gps, y_gps
 
 def propogate_state(x_t_prev, u_t):
@@ -172,7 +172,7 @@ def calc_prop_jacobian_u(x_t_prev, u_t):
     return G_u_t
 
 
-def prediction_step(x_t_prev, u_t, sigma_x_t_prev):
+def prediction_step(x_t_prev, u_t, sigma_x_t_prev, sigma_u_t):
     """Compute the prediction of EKF
 
     Parameters:
@@ -187,7 +187,7 @@ def prediction_step(x_t_prev, u_t, sigma_x_t_prev):
 
     """STUDENT CODE START"""
     # Covariance matrix of control input
-    sigma_u_t = np.array([[.8763,0,0],[0,.59221,0],[0,0,.002]])  # write sigma_u_t !!!!
+    sigma_u_t = np.array([[.003,0,0],[0,.003,0],[0,0,.0000002]])  # write sigma_u_t !!!!
     #sigma_u_t = np.array([[1000,0,0],[0,1000,0],[0,0,1000]])
     #transform = np.array([[np.cos(x_t_prev[2]), -np.sin(x_t_prev[2])],[np.sin(x_t_prev[2]), np.cos(x_t_prev[2])]])
     #sigma_u_t = np.matmul(transform,sigma_u_t_local)
@@ -231,9 +231,9 @@ def calc_kalman_gain(sigma_x_bar_t, H_t):
     """
     """STUDENT CODE START"""
     # Covariance matrix of measurments
-    sigma_z_x= np.array([0.01,0,0]) #CALC SIGMA ZZZ
-    sigma_z_y= np.array([0, 0.01, 0])
-    sigma_z_theta = np.array([0, 0, 0.0002])
+    sigma_z_x= np.array([0.95,0,0]) #CALC SIGMA ZZZ
+    sigma_z_y= np.array([0, 0.95, 0])
+    sigma_z_theta = np.array([0, 0, 0.0000002])
     sigma_z_t = np.array([sigma_z_x,sigma_z_y,sigma_z_theta])
     sigmax_dot_h = np.matmul(sigma_x_bar_t,H_t.T)
     inverse = np.linalg.inv(np.add(np.matmul(np.matmul(H_t,sigma_x_bar_t),H_t.T),sigma_z_t))
@@ -299,7 +299,9 @@ def main():
     # header= ["time","gFx","gFy","gFz","ax","ay","az","wx","wy","wz","p","Azimuth","Pitch","Roll","Latitude","Longitude","Speed (m/s)"]
     timestamps = data["time"][3:]
     ax_ddot = data["ax"][3:]
+    ax_ddot_var = np.var(ax_ddot[:100])
     ay_ddot = data["ay"][3:]
+    ay_ddot_var = np.var(ax_ddot[:100])
     az_ddot = data["az"][3:]
     wx = data["wx"][3:]
     wy = data["wy"][3:]
@@ -307,15 +309,19 @@ def main():
     gFx = data["gFx"][3:]
     gFy = data["gFy"][3:]
     gFz = data["gFz"][3:]
-    yaw = data["Azimuth"]
+    yaw = data["Azimuth"][3:]
     yaw_init = np.sum(np.array(yaw[:100]))/100
-    yaw = [wrap_to_pi((angle+(360-yaw_init))*math.pi/180) for angle in yaw[3:]]
+    yaw = [wrap_to_pi((-angle-(yaw_init))*math.pi/180) for angle in yaw]
+    yaw_var = np.var(yaw[:100])
     lat_gps= data["Latitude"][3:]
     lon_gps= data["Longitude"][3:]
-    plt.plot(ax_ddot)
-    plt.show() 
-    plt.plot(ay_ddot)
+    plt.plot(yaw)
     plt.show()
+    print("variances")
+    print("ax",ax_ddot_var)
+    print("ay", ay_ddot_var)
+    print("yaw", yaw_var)
+
     # -----------------xxxxx---------------------------
     sample_rate = 100
     # The Nyquist rate of the signal.
@@ -341,48 +347,11 @@ def main():
     # Use lfilter to filter x with the FIR filter.
     ax_ddot = lfilter(taps, 1.0, ax_ddot)
     ay_ddot = lfilter(taps, 1.0, ay_ddot)
-    # ----------------xxxxxx 
-
-    # plt.title("Yaw")
-    # plt.plot(yaw)
-    # plt.show()
-
-    plt.title("x_ddot")
-    plt.plot(ax_ddot)
-    plt.show()
-
-    # plt.title("x_ddot filtered")
-    # plt.plot(filtered_x)
-    # plt.show()
-
-    # plt.title("y_ddot")
-    # plt.plot(ay_ddot)
-    # plt.show()
-
-    # plt.title("z_ddot")
-    # plt.plot(az_ddot)
-    # plt.show()
-
-    # plt.plot(yaw)
-    # plt.title("wx")
-    # plt.plot(wx)
-    # plt.show()
-
-    # plt.plot(yaw)
-    # plt.title("wy")
-    # plt.plot(wy)
-    # plt.show()
-
-    plt.plot(yaw)
-    plt.title("wz")
-    plt.plot(wz)
-    plt.show()
 
     lat_origin = lat_gps[0]
     lon_origin = lon_gps[0]
     X_gps = []
     Y_gps = []
-    # plot gps: 
     
     for i in range(len(lat_gps)):
         x, y = convert_gps_to_xy(lat_gps[i], lon_gps[i], lat_origin, lon_origin)   
@@ -390,10 +359,13 @@ def main():
         Y_gps.append(y)
     X_gps = np.array(X_gps)
     Y_gps = np.array(Y_gps)
+    print("X_GPS", np.var(X_gps[:200]))
+    print("Y_GPS", np.var(Y_gps[:200]))
     print("origin", lat_origin, lon_origin)
     print("GPS len", len(lat_gps))
-    squarex = [0,10,10,0,0]
-    squarey = [0,0,10,10,0]
+    squarex = [0,-10,-10,0,0]
+    squarey = [0,0,-10,-10,0]
+    # squarey = [0,0,10,10,0]
     plt.plot(squarex,squarey,label='expected path')
     plt.plot(X_gps, Y_gps, 'o')
     plt.show()
@@ -412,35 +384,38 @@ def main():
 
     #  Run filter over data
     for t, _ in enumerate(timestamps):
-        if(t!=0): 
-            DT = timestamps[t]-timestamps[t-1]
-            if(DT==0):
-                continue
         
         # Get control input
         transform = np.array([[np.sin(state_est_t_prev[2]), np.cos(state_est_t_prev[2]),0],[-np.cos(state_est_t_prev[2]), np.sin(state_est_t_prev[2]),0],[0,0,1]])
-        u_t = np.array([[0], [0],[yaw[t]]])
-        # if(wz[t]>0.5):
-        #     u_t = np.array([[-state_est_t_prev[3]], [-state_est_t_prev[4]], [yaw[t]]])
+        u_t = np.array([[ax_ddot[t]], [ay_ddot[t]],[yaw[t]]])
+        if(wz[t]>0.5):
+            u_t = np.array([[-state_est_t_prev[3]], [-state_est_t_prev[4]], [yaw[t]]])
         u_t_global = np.matmul(transform,u_t)
- 
         state_est_t_prev = state_estimates[:,t-1]
         var_est_t_prev = covariance_estimates[:,:,t-1]
 
         # Prediction Step
-        state_pred_t, var_pred_t = prediction_step(state_est_t_prev, u_t_global, var_est_t_prev)
+        x_ddot_var= ax_ddot_var
+        if(t>50): 
+            x_ddot_var= np.var(ax_ddot[t-50:t])
 
+        y_ddot_var= ay_ddot_var
+        if(t>50): 
+            y_ddot_var= np.var(ay_ddot[t-50:t])
+
+        print(x_ddot_var)
+        sigma_u_t = np.array([[x_ddot_var,0,0],[0,y_ddot_var,0],[0,0,.0000002]]) 
+        state_pred_t, var_pred_t = prediction_step(state_est_t_prev, u_t_global, var_est_t_prev, sigma_u_t)
         # Get measurement
         z_t = np.array([[X_gps[t]], [Y_gps[t]], [yaw[t]]])
+        # z_t = np.array([[state_pred_t[0]], [state_pred_t[1]], [yaw[t]]])
 
         #Correction Step
         state_est_t, var_est_t = correction_step(state_pred_t, z_t, var_pred_t)
-        # if(t>=1700 and t<2000):
-            # plt.arrow(state_est_t[0][0], state_est_t[1][0], np.cos(state_est_t[2][0]), np.sin(state_est_t[2][0]))
+  
         #  For clarity sake/teaching purposes, we explicitly update t->(t-1)
         state_est_t_prev = state_est_t
         var_est_t_prev = var_est_t
-
         # Log Data
         state_est_t.shape = (7,)
         state_estimates[:, t] = state_est_t
@@ -451,24 +426,27 @@ def main():
                                          lat_origin=lat_origin,
                                          lon_origin=lon_origin)
         gps_estimates[:, t] = np.array([x_gps, y_gps])
-        # if(t%100==0):
+        # plt.plot(X_gps[t], Y_gps[t], 'rx')
+        # plt.plot(state_est_t[0], state_est_t[1], 'o')
+        if(t%100==0):
+            plt.arrow(state_est_t[0], state_est_t[1], np.cos(state_est_t[2]), np.sin(state_est_t[2]))
+            plt.plot(state_est_t[0], state_est_t[1], 'o')
         #     plt.plot(squarex,squarey,label='expected path')
-        #     plt.plot(state_est_t[0], state_est_t[1], 'o')
         #     plt.show()
 
-    plt.title("x_dot")
-    plt.plot(yaw)
-    plt.plot(state_estimates[3,:])
-    plt.show()
-    plt.title("y_dot")
-    plt.plot(yaw)
-    plt.plot(state_estimates[4,:])
-    plt.show()
+    # plt.title("x_dot")
+    # plt.plot(yaw)
+    # plt.plot(state_estimates[3,:])
+    # plt.show()
+    # plt.title("y_dot")
+    # plt.plot(yaw)
+    # plt.plot(state_estimates[4,:])
+    # plt.show()
 
-    plt.plot(state_estimates[0,:],state_estimates[1,:],'o',label='estimates')
+    # plt.plot(state_estimates[0,:],state_estimates[1,:],'o',label='estimates')
     # plt.arrow(state_estimates[0,:50],state_estimates[1,:50], cos_theta[:50], sin_theta[:50])
     plt.plot(squarex,squarey,label='expected path')
-    # plt.plot(gps_estimates[0,:],gps_estimates[1,:],':',label='GPS Measurements')
+    plt.plot(gps_estimates[0,:],gps_estimates[1,:],':',label='GPS Measurements')
     plt.ylabel('y position (m)')
     plt.xlabel('x position (m)')
     plt.legend(loc='best')
