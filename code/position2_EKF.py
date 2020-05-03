@@ -462,7 +462,8 @@ def main():
 
         if(step_high and step_low): 
             print(t_high-t_low)
-            u_t = np.array([[0], [t/20000],[useful_theta]])
+            t_diff = t_high-t_low
+            u_t = np.array([[0], [t_diff/20000],[useful_theta]])
             if(wz[t]>0.5):
                 u_t = np.array([[-state_est_t_prev[3]], [-state_est_t_prev[4]], [useful_theta]])
             u_t_global = np.matmul(transform,u_t)

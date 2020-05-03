@@ -1,12 +1,13 @@
 import csv
-import time
-import sys
-import matplotlib.pyplot as plt
-import numpy as np
 import math
 import os.path
+import sys
+import time
+
+import matplotlib.pyplot as plt
+import numpy as np
 from scipy import integrate
-from scipy.signal import butter,filtfilt, kaiserord, lfilter, firwin, freqz
+from scipy.signal import butter, filtfilt, firwin, freqz, kaiserord, lfilter
 
 HEIGHT_THRESHOLD = 0.0  # meters
 GROUND_HEIGHT_THRESHOLD = -.4  # meters
@@ -173,7 +174,7 @@ def calc_weight(z_t, particles_t_pred):
     # w_i[:,0] = (1/(sigma_x*np.sqrt(2*np.pi)))*np.exp(-((z_t[0]-particles_t_pred[:,0])**2)/(2*sigma_x**2))
     # w_i[:,1] = (1/(sigma_y*np.sqrt(2*np.pi)))*np.exp(-((z_t[1]-particles_t_pred[:,1])**2)/(2*sigma_y**2))
     # w_i[:,2] = (1/(sigma_theta*np.sqrt(2*np.pi)))*np.exp(-(wrap_to_pi(z_t[2]-particles_t_pred[:,2])**2)/(2*sigma_theta**2))
-    epsilon= 0.000001 
+    epsilon= 0.0001 
     w_i = np.zeros(3)
     sigma_x = np.sqrt(0.268)
     sigma_y = np.sqrt(0.268)
@@ -182,7 +183,7 @@ def calc_weight(z_t, particles_t_pred):
     w_i[1] = (1/(sigma_y*np.sqrt(2*np.pi)))*np.exp(-((z_t[1]-particles_t_pred[1])**2)/(2*sigma_y**2))
     w_i[2] = (1/(sigma_theta*np.sqrt(2*np.pi)))*np.exp(-(wrap_to_pi(z_t[2]-particles_t_pred[2])**2)/(2*sigma_theta**2))
     w = np.prod(w_i)
-    if(w<0.000001): 
+    if(w<0.0001): 
         w= epsilon
     """STUDENT CODE END"""
     return w
@@ -295,8 +296,8 @@ def main():
     gFz = data["gFz"][3:]
     yaw = data["Azimuth"][3:]
     yaw_init = np.sum(np.array(yaw[500:700]))/200 
-    yaw = [wrap_to_pi((-angle -(yaw_init))*math.pi/180) for angle in yaw]
-    # yaw = [wrap_to_pi((angle-yaw_init)*math.pi/180) for angle in yaw]
+    # yaw = [wrap_to_pi((-angle -(yaw_init))*math.pi/180) for angle in yaw]
+    yaw = [wrap_to_pi((-angle+yaw_init)*math.pi/180) for angle in yaw]
     yaw_var = np.var(yaw[:100])
     lat_gps= data["Latitude"][3:]
     lon_gps= data["Longitude"][3:]
@@ -344,21 +345,11 @@ def main():
     X_gps = []
     Y_gps = []
 
-    plt.title("ax")
+    plt.title("wx")
     plt.plot(yaw)
-    plt.plot(ax_ddot)
+    plt.plot(wx)
     plt.show()
 
-    plt.title("ay")
-    plt.plot(yaw)
-    plt.plot(ay_ddot)
-    plt.show()
-
-    plt.title("az")
-    plt.plot(yaw)
-    plt.plot(az_ddot)
-    plt.show()
-    
     for i in range(len(lat_gps)):
         x, y = convert_gps_to_xy(lat_gps[i], lon_gps[i], lat_origin, lon_origin)   
         X_gps.append(x)
@@ -378,7 +369,7 @@ def main():
 
     #  Initialize filter
     """STUDENT CODE START"""
-    N = 1000 # number of particles
+    N = 500 # number of particles
     initialState = [0,0,0,0,0] # x,y, theta, x_dot, y_dot 
     particles_t_prev_init= np.random.uniform(-5, 15, (N,1)) #initial state assum global (0,0) is at northwest corner
     particles_t_prev_init = np.concatenate((particles_t_prev_init, np.random.uniform(-15,5, (N,1))), axis=1)
@@ -386,69 +377,102 @@ def main():
     zeros = np.zeros((N,2))
     particles_t_prev_init = np.concatenate((particles_t_prev_init, zeros), axis=1)
     particles_t_prev= particles_t_prev_init
+    particles_t  = particles_t_prev_init
     print(particles_t_prev)
     print("particles_prev", particles_t_prev.shape)
     particles = np.zeros((N, len(initialState), len(timestamps)))
     gps_estimates = np.empty((2, len(timestamps)))
     state_estimates = np.zeros((6,len(timestamps)))
-
-    """STUDENT CODE END"""
+    state_estimate= [0, 0]
+    step_high = False
+    step_low = False 
+    t_high = 0 
+    t_low = 0 
+    useful_theta = 0
 
     #  Run filter over data
     for t, _ in enumerate(timestamps):
 
+        if(wx[t]==0):
+            useful_theta= yaw[t]
+        if(wx[t]>1 and not step_low):
+            t_high = t 
+            step_high = True 
+        if(wx[t]<-1 and step_high): 
+            t_low = t 
+            step_low = True 
+        if(t- t_high>100 ):
+            step_high = False 
+            step_low = False 
+            t_high = t
+            t_low = t
+
+        if(step_high and step_low): 
+            z_t = [X_gps[t], Y_gps[t], yaw[t]] 
+            # print(t_high-t_low)
+            t_diff = t_low -t_high
+            u_t = np.array([[0],[t_diff/10000], [useful_theta], [wz[t]]])
+            
+            if(wz[t]>0.5):
+                u_t = np.array([[- np.average(particles_t_prev[:,3])], [- np.average(particles_t_prev[:,4])], [useful_theta], [wz[t]]])
+
+            # Prediction Step
+            particles_t_pred = prediction_step(particles_t_prev, u_t, z_t)
+            
+            # Correction Step
+            # if(t>1 and X_gps[t]==X_gps[t-1] and Y_gps[t]==Y_gps[t-1]):
+            #     particles_t = particles_t_pred
+            #     (n, d) = particles_t.shape 
+            #     state_estimate = np.average(particles_t[:,:d], axis=0, weights=particles_t[:,d-1])
+            # else:
+            #     # print("correction step")
+            particles_t, state_estimate = correction_step(particles_t_pred)
+            particles_t_prev = particles_t[:,:5]
+            # plt.plot(X_gps[t], Y_gps[t], 'x')
+            # print(state_estimate.shape)
+            # print(state_estimate)
+            plt.plot(state_estimate[0], state_estimate[1], 'o')
+            plt.arrow(state_estimate[0], state_estimate[1], np.cos(state_estimate[2]), np.sin(state_estimate[2]))
+            plt.plot(X_gps[t], Y_gps[t], 'x')
+
         # Get control input
-        """STUDENT CODE START"""
         # if(t%500==0):
-        #     plt.plot(particles_t_prev[:,0],particles_t_prev[:,1], 'o', label= t)
-        #     plt.autoscale()
         #     plt.show()
-        z_t = [X_gps[t], Y_gps[t], yaw[t]] 
-        transform = np.array([[np.sin(yaw[t]), np.cos(yaw[t]),0,0],[-np.cos(yaw[t]), np.sin(yaw[t]),0,0],[0,0,1,0], [0,0,0,1]])
-        u_t = np.array([[ax_ddot[t]],[ay_ddot[t]], [yaw[t]], [wz[t]]])
-        u_t = np.dot(transform,u_t) 
-
-        """STUDENT CODE END"""
-
-        # Prediction Step
-        particles_t_pred = prediction_step(particles_t_prev, u_t, z_t)
-        
-        # Correction Step
-        particles_t, state_estimate = correction_step(particles_t_pred)
+            # plt.plot(particles_t_prev[:,0],particles_t_prev[:,1], 'o', label= t)
+           
+            
 
         #Kidnapped Robot 
         # if(np.sum(particles_t[:,3])<1000):
         #     particles_t= particles_t_prev_init
         #  For clarity sake/teaching purposes, we explicitly update t->(t-1)
-        particles_t_prev = particles_t[:,:5]
-
+    
         # Log Data
-        particles[:, :, t] = particles_t[:,:5]
+        # particles[:, :, t] = particles_t[:,:5]
 
-        x_gps, y_gps = convert_gps_to_xy(lat_gps=lat_gps[t],
-                                         lon_gps=lon_gps[t],
-                                         lat_origin=lat_origin,
-                                         lon_origin=lon_origin)
-        gps_estimates[:, t] = np.array([x_gps, y_gps])
-        state_estimate.shape = 6
-        #print('u fooked up', state_estimate)
-        state_estimates[:,t] = state_estimate
+        # x_gps, y_gps = convert_gps_to_xy(lat_gps=lat_gps[t],
+        #                                  lon_gps=lon_gps[t],
+        #                                  lat_origin=lat_origin,
+        #                                  lon_origin=lon_origin)
+        # gps_estimates[:, t] = np.array([x_gps, y_gps])
+        # state_estimate.shape = 6
+        # state_estimates[:,t] = state_estimate
         
-        # input('press enter to skirrrrr..')
-        plt.ylim(-20,10)
-        plt.xlim(-10, 20)
+        # # input('press enter to skirrrrr..')
+        # plt.ylim(-20,10)
+        # plt.xlim(-10, 20)
         
-        
-
+    plt.autoscale()
+    plt.show()
     """STUDENT CODE START"""
     # Plot or print results here
-    plt.plot(state_estimates[0,:],state_estimates[1,:], 'o')
-    plt.plot(gps_estimates[0,:], gps_estimates[1,:], 'x')
+    # plt.plot(state_estimates[0,:],state_estimates[1,:], 'o')
+    # plt.plot(gps_estimates[0,:], gps_estimates[1,:], 'x')
     plt.autoscale()
     squarex = [0,10,10,0,0]
     squarey = [0,0,-10,-10,0]
     # plt.plot(squarex,squarey,label='expected path')
-    plt.show()
+    # plt.show()
 
     # plt.plot(state_estimates[0,:],state_estimates[1,:],'rx',label='estimates')
     # plt.plot(squarex,squarey,label='expected path')
