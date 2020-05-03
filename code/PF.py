@@ -5,13 +5,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import math
 import os.path
-import random
 from scipy import integrate
 from scipy.signal import butter,filtfilt, kaiserord, lfilter, firwin, freqz
 
 HEIGHT_THRESHOLD = 0.0  # meters
 GROUND_HEIGHT_THRESHOLD = -.4  # meters
-DT = 0.1
+DT = 0.01
 X_LANDMARK = 5.  # meters
 Y_LANDMARK = -5.  # meters
 EARTH_RADIUS = 6.3781E6  # meters
@@ -32,7 +31,9 @@ def load_data(filename):
         f = open(filename + "_filtered.csv")
         is_filtered = True
     else:
-        f = open(filename + ".csv")
+        # /Users/computer/Desktop/Spring2020/E205/FinalProject/data/natural gait 1.csv
+        pathfinder = "/Users/computer/Desktop/Spring2020/E205/FinalProject/data/"
+        f = open(pathfinder+ filename + ".csv")
 
     file_reader = csv.reader(f, delimiter=',')
     # Load data into dictionary with headers as keys
@@ -172,7 +173,7 @@ def calc_weight(z_t, particles_t_pred):
     # w_i[:,0] = (1/(sigma_x*np.sqrt(2*np.pi)))*np.exp(-((z_t[0]-particles_t_pred[:,0])**2)/(2*sigma_x**2))
     # w_i[:,1] = (1/(sigma_y*np.sqrt(2*np.pi)))*np.exp(-((z_t[1]-particles_t_pred[:,1])**2)/(2*sigma_y**2))
     # w_i[:,2] = (1/(sigma_theta*np.sqrt(2*np.pi)))*np.exp(-(wrap_to_pi(z_t[2]-particles_t_pred[:,2])**2)/(2*sigma_theta**2))
-    epsilon= 0.001 
+    epsilon= 0.000001 
     w_i = np.zeros(3)
     sigma_x = np.sqrt(0.268)
     sigma_y = np.sqrt(0.268)
@@ -181,7 +182,7 @@ def calc_weight(z_t, particles_t_pred):
     w_i[1] = (1/(sigma_y*np.sqrt(2*np.pi)))*np.exp(-((z_t[1]-particles_t_pred[1])**2)/(2*sigma_y**2))
     w_i[2] = (1/(sigma_theta*np.sqrt(2*np.pi)))*np.exp(-(wrap_to_pi(z_t[2]-particles_t_pred[2])**2)/(2*sigma_theta**2))
     w = np.prod(w_i)
-    if(w==0): 
+    if(w<0.000001): 
         w= epsilon
     """STUDENT CODE END"""
     return w
@@ -199,13 +200,25 @@ def prediction_step(particles_t_prev, u_t, z_t):
     """
 
     """STUDENT CODE START"""
-    n= len(particles_t_prev[:,0])
+    n,d = particles_t_prev.shape
     particles_t_state = np.zeros(np.shape(particles_t_prev))
-    particles_t_pred = np.zeros((n,4))
-    distance = np.random.uniform(-1.5,1.5, (n,2)) #MAY WANT TO DECREASE RANDOM RANGE FOR FORWARD DISTANCE
-    distance = np.concatenate((distance, np.random.uniform(-np.pi, np.pi, (n,1))), axis=1)
-    particles_t_state= particles_t_prev  + distance
+    particles_t_pred = np.zeros((n,d+1))
+
+    perturb = np.random.uniform(-1,1, (n,2)) #MAY WANT TO DECREASE RANDOM RANGE FOR FORWARD DISTANCE
+    perturb = np.concatenate((perturb, np.random.uniform(-np.pi, np.pi, (n,1))), axis=1)
+    perturb = np.concatenate((perturb, np.zeros((n,2))),axis=1)
+
+    motion_model = np.zeros((n,d))
+    motion_model[:,0] = particles_t_prev[:, 3] * DT 
+    motion_model[:,1] = particles_t_prev[:, 4] * DT 
+    motion_model[:,2] = np.tile([u_t[3]*DT], n)
+    motion_model[:,3] = np.tile([u_t[0]*DT], n)
+    motion_model[:,4] = np.tile([u_t[1]*DT], n)
+    # Progating Motion Model 
+    particles_t_state= particles_t_prev  + perturb + motion_model
     particles_t_state[:,2] = np.array([wrap_to_pi(i) for i in particles_t_state[:,2]])
+
+    # Weighting particles
     w_i = np.array([[calc_weight(z_t, particles_t_state[i]) for i in range(n)]]).T
     particles_t_pred= np.concatenate((particles_t_state,w_i), axis = 1)
     """STUDENT CODE END"""
@@ -224,8 +237,8 @@ def resample(particles_t_pred):
 
     """STUDENT CODE START"""
     #NEED TO DO THIS FOR EVERY STATE!!!!
-    n= len(particles_t_pred[:,0])
-    weights = list(particles_t_pred[:,3])
+    n,d = particles_t_pred.shape
+    weights = list(particles_t_pred[:,d-1])
     weights_sum= np.sum(weights, axis=0)
     weights_sum= [weights_sum for i in range(n)]
     # weight_probs= [1.0/(n)]
@@ -249,14 +262,9 @@ def correction_step(particles_t_pred):
     particles_t       (np.array)    -- the filtered state estimate of time t
     """
 
-    """STUDENT CODE START"""
+    n, d = particles_t_pred.shape
     particles_t = resample(particles_t_pred)
-    # state_estimate = np.array([[np.average(particles_t[:,0])],[np.average(particles_t[:,1])],[np.average(particles_t[:,2])]])
-    state_estimate = np.average(particles_t[:,:3], axis=0, weights=particles_t[:,3])
-    # print("state est", state_estimate)
-    # print("state_est", state_estimate.shape)
-
-    """STUDENT CODE END"""
+    state_estimate = np.average(particles_t[:,:d], axis=0, weights=particles_t[:,d-1])
 
     return particles_t[:,:], state_estimate
 
@@ -265,15 +273,19 @@ def main():
     """Run a EKF on logged data from IMU and LiDAR moving in a box formation around a landmark"""
 
     filepath = ""
-    filename = '../data/position1_10_square_edited'
-    # filename = '../data/position1_front_back_10_edited'
+    # filename = '../data/position2_10_square1_edited'
+    # filename = '../data/position2_front_back_10_edited'
+    filename = 'postion2_TJ_1_edited'
+    # filename = '../data/position2_TJ_2_edited'
     data, is_filtered = load_data(filepath + filename)
 
     # Load data into variables
     # header= ["time","gFx","gFy","gFz","ax","ay","az","wx","wy","wz","p","Azimuth","Pitch","Roll","Latitude","Longitude","Speed (m/s)"]
     timestamps = data["time"][3:]
     ax_ddot = data["ax"][3:]
+    ax_ddot_var = np.var(ax_ddot[:100])
     ay_ddot = data["ay"][3:]
+    ay_ddot_var = np.var(ax_ddot[:100])
     az_ddot = data["az"][3:]
     wx = data["wx"][3:]
     wy = data["wy"][3:]
@@ -281,15 +293,20 @@ def main():
     gFx = data["gFx"][3:]
     gFy = data["gFy"][3:]
     gFz = data["gFz"][3:]
-    yaw = data["Azimuth"]
-    yaw_init = np.sum(np.array(yaw[:100]))/100
-    yaw = [wrap_to_pi((angle+(360-yaw_init))*math.pi/180) for angle in yaw[3:]]
+    yaw = data["Azimuth"][3:]
+    yaw_init = np.sum(np.array(yaw[500:700]))/200 
+    yaw = [wrap_to_pi((-angle -(yaw_init))*math.pi/180) for angle in yaw]
+    # yaw = [wrap_to_pi((angle-yaw_init)*math.pi/180) for angle in yaw]
+    yaw_var = np.var(yaw[:100])
     lat_gps= data["Latitude"][3:]
     lon_gps= data["Longitude"][3:]
-    plt.plot(ax_ddot)
-    plt.show() 
-    plt.plot(ay_ddot)
-    plt.show()
+
+
+    print("variances")
+    print("ax",ax_ddot_var)
+    print("ay", ay_ddot_var)
+    print("yaw", yaw_var)
+
     # -----------------xxxxx---------------------------
     sample_rate = 100
     # The Nyquist rate of the signal.
@@ -315,48 +332,32 @@ def main():
     # Use lfilter to filter x with the FIR filter.
     ax_ddot = lfilter(taps, 1.0, ax_ddot)
     ay_ddot = lfilter(taps, 1.0, ay_ddot)
-    # ----------------xxxxxx 
-
-    # plt.title("Yaw")
-    # plt.plot(yaw)
-    # plt.show()
-
-    plt.title("x_ddot")
-    plt.plot(ax_ddot)
-    plt.show()
-
-    # plt.title("x_ddot filtered")
-    # plt.plot(filtered_x)
-    # plt.show()
-
-    # plt.title("y_ddot")
-    # plt.plot(ay_ddot)
-    # plt.show()
-
-    # plt.title("z_ddot")
-    # plt.plot(az_ddot)
-    # plt.show()
-
-    # plt.plot(yaw)
-    # plt.title("wx")
-    # plt.plot(wx)
-    # plt.show()
-
-    # plt.plot(yaw)
-    # plt.title("wy")
-    # plt.plot(wy)
-    # plt.show()
-
-    plt.plot(yaw)
-    plt.title("wz")
-    plt.plot(wz)
-    plt.show()
+    wx = lfilter(taps, 1.0, wx)
+    wy = lfilter(taps, 1.0, wy)
+    wz = lfilter(taps, 1.0, wz)
+    gFx = lfilter(taps, 1.0, gFx)
+    gFy = lfilter(taps, 1.0, gFy)
+    gFz = lfilter(taps, 1.0, gFz)
 
     lat_origin = lat_gps[0]
     lon_origin = lon_gps[0]
     X_gps = []
     Y_gps = []
-    # plot gps: 
+
+    plt.title("ax")
+    plt.plot(yaw)
+    plt.plot(ax_ddot)
+    plt.show()
+
+    plt.title("ay")
+    plt.plot(yaw)
+    plt.plot(ay_ddot)
+    plt.show()
+
+    plt.title("az")
+    plt.plot(yaw)
+    plt.plot(az_ddot)
+    plt.show()
     
     for i in range(len(lat_gps)):
         x, y = convert_gps_to_xy(lat_gps[i], lon_gps[i], lat_origin, lon_origin)   
@@ -364,64 +365,142 @@ def main():
         Y_gps.append(y)
     X_gps = np.array(X_gps)
     Y_gps = np.array(Y_gps)
+    print("X_GPS", np.var(X_gps[:200]))
+    print("Y_GPS", np.var(Y_gps[:200]))
     print("origin", lat_origin, lon_origin)
     print("GPS len", len(lat_gps))
-    squarex = [0,10,10,0,0]
-    squarey = [0,0,10,10,0]
-    plt.plot(squarex,squarey,label='expected path')
+    squarex = [0,-10,-10,0,0]
+    squarey = [0,0,-10,-10,0]
+    # squarey = [0,0,10,10,0]
+    # plt.plot(squarex,squarey,label='expected path')
     plt.plot(X_gps, Y_gps, 'o')
     plt.show()
 
-
-#  Initialize filter
+    #  Initialize filter
     """STUDENT CODE START"""
-    N = 5000 # number of particles
-    initialState = [0,0,0] # x,y, theta
+    N = 1000 # number of particles
+    initialState = [0,0,0,0,0] # x,y, theta, x_dot, y_dot 
     particles_t_prev_init= np.random.uniform(-5, 15, (N,1)) #initial state assum global (0,0) is at northwest corner
     particles_t_prev_init = np.concatenate((particles_t_prev_init, np.random.uniform(-15,5, (N,1))), axis=1)
     particles_t_prev_init = np.concatenate((particles_t_prev_init, np.random.uniform(-np.pi,np.pi, (N,1))), axis=1)
+    zeros = np.zeros((N,2))
+    particles_t_prev_init = np.concatenate((particles_t_prev_init, zeros), axis=1)
     particles_t_prev= particles_t_prev_init
     print(particles_t_prev)
     print("particles_prev", particles_t_prev.shape)
     particles = np.zeros((N, len(initialState), len(timestamps)))
     gps_estimates = np.empty((2, len(timestamps)))
-    state_estimates = np.zeros((3,len(timestamps)))
+    state_estimates = np.zeros((6,len(timestamps)))
 
     """STUDENT CODE END"""
 
     #  Run filter over data
     for t, _ in enumerate(timestamps):
+
         # Get control input
         """STUDENT CODE START"""
-        if(t%25==0):
-            plt.plot(particles_t_prev[:,0],particles_t_prev[:,1], 'o', label= t)
-            plt.show()
-        transform = np.array([[np.sin(particles_t_prev[2]), np.cos(particles_t_prev[2]),0],[-np.cos(particles_t_prev[2]), np.sin(particles_t_prev[2]),0],[0,0,1]])
-        u_t = [[ax_ddot[t]],[ay_ddot[t]]]
-        u_t_global= np.matmul(transform,u_t)
-        z_t = [X_LANDMARK-x_global,Y_LANDMARK-y_global,wrap_to_pi(-yaw_lidar[t])]
-        u_t = [x_ddot[t], y_ddot[t]]
+        # if(t%500==0):
+        #     plt.plot(particles_t_prev[:,0],particles_t_prev[:,1], 'o', label= t)
+        #     plt.autoscale()
+        #     plt.show()
+        z_t = [X_gps[t], Y_gps[t], yaw[t]] 
+        transform = np.array([[np.sin(yaw[t]), np.cos(yaw[t]),0,0],[-np.cos(yaw[t]), np.sin(yaw[t]),0,0],[0,0,1,0], [0,0,0,1]])
+        u_t = np.array([[ax_ddot[t]],[ay_ddot[t]], [yaw[t]], [wz[t]]])
+        u_t = np.dot(transform,u_t) 
+
         """STUDENT CODE END"""
 
         # Prediction Step
         particles_t_pred = prediction_step(particles_t_prev, u_t, z_t)
         
-        
         # Correction Step
         particles_t, state_estimate = correction_step(particles_t_pred)
-        if(np.sum(particles_t[:,3])<1000):
-            particles_t= particles_t_prev_init
+
+        #Kidnapped Robot 
+        # if(np.sum(particles_t[:,3])<1000):
+        #     particles_t= particles_t_prev_init
         #  For clarity sake/teaching purposes, we explicitly update t->(t-1)
-        particles_t_prev = particles_t[:,:3]
+        particles_t_prev = particles_t[:,:5]
 
         # Log Data
-        particles[:, :, t] = particles_t[:,:3]
+        particles[:, :, t] = particles_t[:,:5]
 
         x_gps, y_gps = convert_gps_to_xy(lat_gps=lat_gps[t],
                                          lon_gps=lon_gps[t],
                                          lat_origin=lat_origin,
                                          lon_origin=lon_origin)
         gps_estimates[:, t] = np.array([x_gps, y_gps])
-        state_estimate.shape = 3
+        state_estimate.shape = 6
         #print('u fooked up', state_estimate)
         state_estimates[:,t] = state_estimate
+        
+        # input('press enter to skirrrrr..')
+        plt.ylim(-20,10)
+        plt.xlim(-10, 20)
+        
+        
+
+    """STUDENT CODE START"""
+    # Plot or print results here
+    plt.plot(state_estimates[0,:],state_estimates[1,:], 'o')
+    plt.plot(gps_estimates[0,:], gps_estimates[1,:], 'x')
+    plt.autoscale()
+    squarex = [0,10,10,0,0]
+    squarey = [0,0,-10,-10,0]
+    # plt.plot(squarex,squarey,label='expected path')
+    plt.show()
+
+    # plt.plot(state_estimates[0,:],state_estimates[1,:],'rx',label='estimates')
+    # plt.plot(squarex,squarey,label='expected path')
+    # plt.plot(gps_estimates[0,:],gps_estimates[1,:],':',label='GPS Measurements')
+    # plt.ylabel('y position (m)')
+    # plt.xlabel('x position (m)')
+    # plt.legend(loc='best')
+    # plt.show()
+
+    #state estimate plot
+    # fig, ax = plt.subplots(1,1)
+    # ax.plot(state_estimates[0,:],state_estimates[1,:],'r-.',label='estimates')
+    # ax.plot(gps_estimates[0,:],gps_estimates[1,:],':',label='GPS Measurements')
+    # ax.plot(squarex,squarey,label='expected path')
+    # ax.set_xlabel('x position (m)')
+    # ax.set_ylabel('y position (m)')
+    # ax.legend(loc='best')
+    # plt.show()
+
+    #yaw angle over time
+    # fig, ax = plt.subplots(1,1)
+    # ax.plot(np.arange(len(state_estimates[2,:]))*DT,state_estimates[2,:])
+    # ax.set_xlabel('time (s)')
+    # ax.set_ylabel('yaw angle (rad)')
+    # plt.show()
+
+    #RMS error (not robust)
+    # error = []
+    # residuals = []
+    # for i in range(len(state_estimates[0,:])):
+    #     # I tried another way of doing this, but it didn't help
+    #     x = state_estimates[0,i]
+    #     y = state_estimates[1,i]
+    #     min_dist= min([x**2, y**2, (-10-y)**2, (10-x)**2])
+    #     # print(min_dist)
+    #     distance= min_dist
+    #     residuals.append(distance)
+    #     error.append(np.sqrt(np.mean(residuals)))
+    # # mean = np.mean(residuals)
+    # # n= len(residuals)
+    # # residuals = [(mean- i)**2/n for i in residuals]
+    # # error = np.sqrt(residuals)
+    # fig,ax = plt.subplots(1,1)
+    # ax.plot(np.arange(len(error))*DT,error)
+    # ax.set_xlabel('time (s)')
+    # ax.set_ylabel('RMS Tracking Error (m)')
+    # plt.show()
+
+
+    """STUDENT CODE END"""
+    return 0
+
+
+if __name__ == "__main__":
+    main()

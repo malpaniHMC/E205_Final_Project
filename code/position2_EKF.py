@@ -231,8 +231,8 @@ def calc_kalman_gain(sigma_x_bar_t, H_t):
     """
     """STUDENT CODE START"""
     # Covariance matrix of measurments
-    sigma_z_x= np.array([0.95,0,0]) #CALC SIGMA ZZZ
-    sigma_z_y= np.array([0, 0.95, 0])
+    sigma_z_x= np.array([0.8,0,0]) #CALC SIGMA ZZZ
+    sigma_z_y= np.array([0, 0.8, 0])
     sigma_z_theta = np.array([0, 0, 0.0000002])
     sigma_z_t = np.array([sigma_z_x,sigma_z_y,sigma_z_theta])
     sigmax_dot_h = np.matmul(sigma_x_bar_t,H_t.T)
@@ -291,8 +291,10 @@ def main():
     """Run a EKF on logged data from IMU and LiDAR moving in a box formation around a landmark"""
 
     filepath = ""
-    filename = '../data/position1_10_square_edited'
-    # filename = '../data/position1_front_back_10_edited'
+    # filename = '../data/position2_10_square1_edited'
+    # filename = '../data/position2_front_back_10_edited'
+    filename = '../data/postion2_TJ_1_edited'
+    # filename = '../data/position2_TJ_2_edited'
     data, is_filtered = load_data(filepath + filename)
 
     # Load data into variables
@@ -310,13 +312,14 @@ def main():
     gFy = data["gFy"][3:]
     gFz = data["gFz"][3:]
     yaw = data["Azimuth"][3:]
-    yaw_init = np.sum(np.array(yaw[:100]))/100
-    yaw = [wrap_to_pi((-angle-(yaw_init))*math.pi/180) for angle in yaw]
+    yaw_init = np.sum(np.array(yaw[500:700]))/200 
+    yaw = [wrap_to_pi((-angle -(yaw_init))*math.pi/180) for angle in yaw]
+    # yaw = [wrap_to_pi((angle-yaw_init)*math.pi/180) for angle in yaw]
     yaw_var = np.var(yaw[:100])
     lat_gps= data["Latitude"][3:]
     lon_gps= data["Longitude"][3:]
-    plt.plot(yaw)
-    plt.show()
+
+
     print("variances")
     print("ax",ax_ddot_var)
     print("ay", ay_ddot_var)
@@ -347,11 +350,58 @@ def main():
     # Use lfilter to filter x with the FIR filter.
     ax_ddot = lfilter(taps, 1.0, ax_ddot)
     ay_ddot = lfilter(taps, 1.0, ay_ddot)
+    wx = lfilter(taps, 1.0, wx)
+    wy = lfilter(taps, 1.0, wy)
+    wz = lfilter(taps, 1.0, wz)
+    gFx = lfilter(taps, 1.0, gFx)
+    gFy = lfilter(taps, 1.0, gFy)
+    gFz = lfilter(taps, 1.0, gFz)
 
     lat_origin = lat_gps[0]
     lon_origin = lon_gps[0]
     X_gps = []
     Y_gps = []
+
+
+    # plt.title("gFx")
+    # plt.plot(gFx, label= "x")
+    # plt.plot(gFy, label= "y")
+    # plt.plot(gFz, label= "z")
+    # plt.show()
+
+    # plt.title("yaw")
+    # plt.plot(yaw)
+    # plt.show()
+
+    # plt.title("wx")
+    # plt.plot(yaw)
+    # plt.plot(wx)
+    # plt.show()
+
+    # plt.title("wy")
+    # plt.plot(yaw)
+    # plt.plot(wy)
+    # plt.show()
+
+    # plt.title("wz")
+    # plt.plot(yaw)
+    # plt.plot(wz)
+    # plt.show()
+
+    plt.title("ax")
+    plt.plot(yaw)
+    plt.plot(ax_ddot)
+    plt.show()
+
+    plt.title("ay")
+    plt.plot(yaw)
+    plt.plot(ay_ddot)
+    plt.show()
+
+    plt.title("az")
+    plt.plot(yaw)
+    plt.plot(az_ddot)
+    plt.show()
     
     for i in range(len(lat_gps)):
         x, y = convert_gps_to_xy(lat_gps[i], lon_gps[i], lat_origin, lon_origin)   
@@ -366,7 +416,7 @@ def main():
     squarex = [0,-10,-10,0,0]
     squarey = [0,0,-10,-10,0]
     # squarey = [0,0,10,10,0]
-    plt.plot(squarex,squarey,label='expected path')
+    # plt.plot(squarex,squarey,label='expected path')
     plt.plot(X_gps, Y_gps, 'o')
     plt.show()
 
@@ -380,38 +430,64 @@ def main():
     gps_estimates = np.empty((2, len(timestamps)))
 
     state_estimates[:,-1] = state_est_t_prev
+    state_est_t = state_est_t_prev
+    var_est_t= var_est_t_prev
     covariance_estimates[:,:,-1] = var_est_t_prev
-
+    step_high = False
+    step_low = False 
+    t_high = 0 
+    t_low = 0 
+    useful_theta = 0
     #  Run filter over data
     for t, _ in enumerate(timestamps):
+        if(wx[t]==0):
+            useful_theta= yaw[t]
+        if(wx[t]>1):
+            t_high = t 
+            step_high = True 
+        if(wx[t]<-1 and step_high): 
+            t_low = t 
+            step_low = True 
+        if(t- t_high>100 ):
+            step_high = False 
+            step_low = False 
+            t_high = t
+            t_low = t
+
         
         # Get control input
         transform = np.array([[np.sin(state_est_t_prev[2]), np.cos(state_est_t_prev[2]),0],[-np.cos(state_est_t_prev[2]), np.sin(state_est_t_prev[2]),0],[0,0,1]])
-        u_t = np.array([[ax_ddot[t]], [ay_ddot[t]],[yaw[t]]])
-        if(wz[t]>0.5):
-            u_t = np.array([[-state_est_t_prev[3]], [-state_est_t_prev[4]], [yaw[t]]])
-        u_t_global = np.matmul(transform,u_t)
-        state_est_t_prev = state_estimates[:,t-1]
-        var_est_t_prev = covariance_estimates[:,:,t-1]
+        
+        
 
-        # Prediction Step
-        x_ddot_var= ax_ddot_var
-        if(t>50): 
-            x_ddot_var= np.var(ax_ddot[t-50:t])
+        if(step_high and step_low): 
+            print(t_high-t_low)
+            u_t = np.array([[0], [t/20000],[useful_theta]])
+            if(wz[t]>0.5):
+                u_t = np.array([[-state_est_t_prev[3]], [-state_est_t_prev[4]], [useful_theta]])
+            u_t_global = np.matmul(transform,u_t)
+            state_est_t_prev = state_estimates[:,t-1]
+            var_est_t_prev = covariance_estimates[:,:,t-1]
+            print("STEP")
+            
+            # Prediction Step
+            x_ddot_var= ax_ddot_var
+            if(t>50): 
+                x_ddot_var= np.var(ax_ddot[t-50:t])
 
-        y_ddot_var= ay_ddot_var
-        if(t>50): 
-            y_ddot_var= np.var(ay_ddot[t-50:t])
+            y_ddot_var= ay_ddot_var
+            if(t>50): 
+                y_ddot_var= np.var(ay_ddot[t-50:t])
+            sigma_u_t = np.array([[x_ddot_var,0,0],[0,y_ddot_var,0],[0,0,.0000002]]) 
 
-        print(x_ddot_var)
-        sigma_u_t = np.array([[x_ddot_var,0,0],[0,y_ddot_var,0],[0,0,.0000002]]) 
-        state_pred_t, var_pred_t = prediction_step(state_est_t_prev, u_t_global, var_est_t_prev, sigma_u_t)
-        # Get measurement
-        z_t = np.array([[X_gps[t]], [Y_gps[t]], [yaw[t]]])
-        # z_t = np.array([[state_pred_t[0]], [state_pred_t[1]], [yaw[t]]])
+            state_pred_t, var_pred_t = prediction_step(state_est_t_prev, u_t_global, var_est_t_prev, sigma_u_t)
+            
+            # Get measurement
+            z_t = np.array([[X_gps[t]], [Y_gps[t]], [yaw[t]]])
+            # z_t = np.array([[state_pred_t[0]], [state_pred_t[1]], [yaw[t]]])
 
-        #Correction Step
-        state_est_t, var_est_t = correction_step(state_pred_t, z_t, var_pred_t)
+            #Correction Step
+            state_est_t, var_est_t = correction_step(state_pred_t, z_t, var_pred_t)
   
         #  For clarity sake/teaching purposes, we explicitly update t->(t-1)
         state_est_t_prev = state_est_t
@@ -445,7 +521,7 @@ def main():
 
     # plt.plot(state_estimates[0,:],state_estimates[1,:],'o',label='estimates')
     # plt.arrow(state_estimates[0,:50],state_estimates[1,:50], cos_theta[:50], sin_theta[:50])
-    plt.plot(squarex,squarey,label='expected path')
+    # plt.plot(squarex,squarey,label='expected path')
     plt.plot(gps_estimates[0,:],gps_estimates[1,:],':',label='GPS Measurements')
     plt.ylabel('y position (m)')
     plt.xlabel('x position (m)')
